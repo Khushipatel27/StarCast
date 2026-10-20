@@ -1,0 +1,9 @@
+[project]
+name = "yelp-hybrid-recsys"
+version = "1.0.0"
+description = "Hybrid Yelp rating predictor and recommender served with FastAPI"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

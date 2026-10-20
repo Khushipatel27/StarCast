@@ -1,0 +1,12 @@
+services:
+  api:
+    build: .
+    image: yelp-hybrid-recsys:latest
+    ports:
+      - "8000:8000"
+    environment:
+      ARTIFACT_DIR: /app/artifacts
+    # Mount freshly trained artifacts without rebuilding the image:
+    # volumes:
+    #   - ./artifacts:/app/artifacts:ro
+    restart: unless-stopped
