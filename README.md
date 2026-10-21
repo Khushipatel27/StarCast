@@ -337,14 +337,14 @@ starcast/
 
 ---
 
-## Limitations and future work
+## Things Project Does:
 
-- **No text understanding.** Review text only contributes its length. Sentence embeddings of reviews and business descriptions could add a content-based signal.
-- **Static model.** New ratings require a full retrain. Incremental MF updates or a scheduled retraining job would fix this.
-- **Matrix factorization training is a pure-Python SGD loop** (35–90 s per fit). It could be vectorized or replaced with ALS.
-- **Explanations.** SHAP values per recommendation ("recommended because you rate Italian places highly") would make results easier to interpret.
-- **Experiment tracking.** Logging runs to MLflow would make hyperparameter comparisons reproducible.
-- **Scale.** Candidate retrieval is brute force over 25K items. A larger catalog would need an approximate nearest-neighbor index (FAISS).
+- Builds recommendations from user rating history, with review length added as an extra behavioral feature.
+- Trains in batch on a fixed snapshot of ratings, producing a model that serves recommendations until the next retrain.
+- Learns user and item embeddings through matrix factorization, using a custom SGD training loop written from scratch in Python (35–90 s per fit).
+- Returns a ranked list of recommended businesses for each user.
+- Runs and compares hyperparameter configurations to tune model performance.
+- Retrieves candidates by exhaustively scoring all 25K businesses for each user, giving exact top-N results.
 
 ---
 
