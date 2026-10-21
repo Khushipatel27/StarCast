@@ -1,7 +1,9 @@
 """Biased matrix factorization trained with SGD on explicit ratings."""
 import numpy as np
 
-from .features import MAX_STARS, MIN_STARS
+from ..features import MAX_STARS, MIN_STARS
+
+_STATE_KEYS = ("g", "u_map", "b_map", "bu", "bi", "P", "Q")
 
 
 class BiasMF:
@@ -41,6 +43,17 @@ class BiasMF:
                 pu += lr * (err * qi - reg * pu)
                 qi += lr * (err * pu_old - reg * qi)
         return self
+
+    def state_dict(self):
+        """Plain dicts/arrays only, so saved artifacts don't depend on this class's import path."""
+        return {k: getattr(self, k) for k in _STATE_KEYS}
+
+    @classmethod
+    def from_state(cls, state):
+        mf = cls()
+        for k in _STATE_KEYS:
+            setattr(mf, k, state[k])
+        return mf
 
     def predict(self, u, b):
         ui, bi_ = self.u_map.get(u), self.b_map.get(b)

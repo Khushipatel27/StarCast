@@ -1,65 +1,34 @@
-"""FastAPI service for the hybrid Yelp rating model."""
-import os
+"""StarCast FastAPI service."""
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Path, Query, Request
-from pydantic import BaseModel
 
-from recsys.model import HybridRecommender
-
-DEFAULT_ARTIFACT_DIR = "artifacts"
-
-
-class Components(BaseModel):
-    xgboost: float
-    matrix_factorization: float
-    bayesian_baseline: float
-
-
-class PredictResponse(BaseModel):
-    user_id: str
-    business_id: str
-    predicted_stars: float
-    components: Components
-    known_user: bool
-    known_business: bool
-
-
-class Recommendation(BaseModel):
-    rank: int
-    business_id: str
-    name: str
-    city: str
-    state: str
-    categories: str
-    yelp_stars: float
-    predicted_stars: float
-
-
-class RecommendResponse(BaseModel):
-    user_id: str
-    known_user: bool
-    k: int
-    filters: dict
-    recommendations: list[Recommendation]
+from .. import __version__, config
+from ..models import HybridRecommender
+from .schemas import HealthResponse, PredictResponse, RecommendFilters, RecommendResponse
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     t0 = time.time()
-    app.state.model = HybridRecommender.load(os.environ.get("ARTIFACT_DIR", DEFAULT_ARTIFACT_DIR))
+    app.state.model = HybridRecommender.load(config.artifact_dir())
     app.state.load_seconds = round(time.time() - t0, 2)
     yield
 
 
 app = FastAPI(
-    title="Yelp Hybrid Recommender",
-    description="Rating prediction and top-K recommendations from an XGBoost + matrix factorization hybrid.",
-    version="1.0.0",
+    title="StarCast",
+    description="Star-rating prediction and top-K business recommendations from an "
+                "XGBoost + matrix factorization hybrid model.",
+    version=__version__,
     lifespan=lifespan,
 )
+
+
+def get_model(request: Request) -> HybridRecommender:
+    return request.app.state.model
 
 
 @app.middleware("http")
@@ -70,25 +39,27 @@ async def timing_header(request: Request, call_next):
     return response
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse, tags=["ops"])
 def health(request: Request):
-    m: HybridRecommender = request.app.state.model
-    return {
-        "status": "ok",
-        "model_load_seconds": request.app.state.load_seconds,
-        "n_users": len(m.u_stats),
-        "n_businesses": len(m.item_ids),
-        "metrics": m.metrics.get("validation", {}).get("rmse"),
-    }
+    m = get_model(request)
+    return HealthResponse(
+        status="ok",
+        version=__version__,
+        model_load_seconds=request.app.state.load_seconds,
+        n_users=len(m.u_stats),
+        n_businesses=len(m.item_ids),
+        validation_rmse=m.metrics.get("validation", {}).get("rmse"),
+    )
 
 
-@app.get("/predict", response_model=PredictResponse)
+@app.get("/predict", response_model=PredictResponse, tags=["model"])
 def predict(
     request: Request,
     user_id: str = Query(..., min_length=1, description="Yelp user_id"),
     business_id: str = Query(..., min_length=1, description="Yelp business_id"),
 ):
-    m: HybridRecommender = request.app.state.model
+    """Predicted star rating for one (user, business) pair."""
+    m = get_model(request)
     known_user, known_biz = m.is_known_user(user_id), m.is_known_business(business_id)
     if not known_user and not known_biz:
         raise HTTPException(404, "Neither user_id nor business_id is known to the model.")
@@ -96,11 +67,11 @@ def predict(
                            known_business=known_biz, **m.predict(user_id, business_id))
 
 
-@app.get("/recommend/{user_id}", response_model=RecommendResponse)
+@app.get("/recommend/{user_id}", response_model=RecommendResponse, tags=["model"])
 def recommend(
     request: Request,
     user_id: str = Path(..., min_length=1),
-    k: int = Query(10, ge=1, le=100, description="number of businesses to return"),
+    k: int = Query(10, ge=1, le=config.MAX_K, description="number of businesses to return"),
     city: Optional[str] = Query(None, description="exact city match, case-insensitive"),
     state: Optional[str] = Query(None, description="two-letter state code, e.g. NV"),
     category: Optional[str] = Query(None, description="substring of the business categories, e.g. 'pizza'"),
@@ -108,14 +79,15 @@ def recommend(
     include_closed: bool = Query(False),
     exclude_rated: bool = Query(True, description="skip businesses the user already rated"),
 ):
-    m: HybridRecommender = request.app.state.model
+    """Top-K businesses for a user: MF candidate retrieval, then hybrid re-ranking."""
+    m = get_model(request)
     if state is None and city is None and not anywhere:
         state = m.home_state(user_id)
     recs = m.recommend(user_id, k=k, city=city, state=state, category=category,
                        include_closed=include_closed, exclude_rated=exclude_rated)
     return RecommendResponse(
         user_id=user_id, known_user=m.is_known_user(user_id), k=k,
-        filters={"city": city, "state": state, "category": category,
-                 "include_closed": include_closed, "exclude_rated": exclude_rated},
+        filters=RecommendFilters(city=city, state=state, category=category,
+                                 include_closed=include_closed, exclude_rated=exclude_rated),
         recommendations=recs,
     )

@@ -1,7 +1,14 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
 .pytest_cache/
-data/
-artifacts/
+
+# Data and trained models are not committed
+data/*
+!data/README.md
+artifacts/*
+!artifacts/.gitkeep
+
 *.log

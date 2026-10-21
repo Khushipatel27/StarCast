@@ -1,12 +1,15 @@
-# Yelp Hybrid Recommender API
+# StarCast
 
-![Python](https://img.shields.io/badge/python-3.11-blue)
+**Forecasting the stars a user would give a business, and recommending the ones they'll love.**
+
+![Python](https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688)
 ![XGBoost](https://img.shields.io/badge/XGBoost-hybrid%20model-orange)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED)
-![Tests](https://img.shields.io/badge/tests-13%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-25%20passing-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-A rating-prediction and recommendation service for Yelp businesses. It predicts how many stars a user would give a business and returns a personalized top-K list of businesses for any user.
+StarCast is a rating-prediction and recommendation service built on the Yelp Open Dataset. Given a user and a business, it predicts the star rating the user would give. Given just a user, it returns a personalized top-K list of businesses.
 
 Under the hood, a **hybrid model** combines three predictors with a learned ridge blend:
 
@@ -16,7 +19,7 @@ Under the hood, a **hybrid model** combines three predictors with a learned ridg
 
 It is served through **FastAPI** and packaged with **Docker**.
 
-> This project extends my DSCI 553 (Foundations and Applications of Data Mining, USC) coursework. I turned a batch Spark job into a deployable service with a two-stage recommendation endpoint, tests, and containerization.
+> This project extends my DSCI 553 (Foundations and Applications of Data Mining, USC) coursework. I turned a batch Spark job into an installable Python package and a deployable service with a two-stage recommendation endpoint, tests, CI, and containerization.
 
 ---
 
@@ -27,20 +30,23 @@ It is served through **FastAPI** and packaged with **Docker**.
 - **Fast serving.** `/predict` has a 10 ms median latency, and `/recommend` has a 16 ms median and a 32 ms 95th percentile, both measured in Docker.
 - **Leakage-safe training.** Training rows use leave-one-out target encoding, and blend weights are learned only on a holdout taken from the training set.
 - **Cold-start handling.** Unknown users and businesses still get sensible scores through Bayesian smoothing toward the global mean.
-- **Production basics.** The service has typed request/response schemas, input validation, a health check, a latency header, a non-root container, and a 615 MB CPU-only image.
+- **Production basics.** The service has typed response schemas, input validation, a health check, a latency header, a non-root container, a 618 MB CPU-only image, and GitHub Actions CI.
 
 ---
 
 ## Quick start
 
 ```bash
-# 1. install
-python -m venv .venv
-.venv\Scripts\activate            # Windows  (macOS/Linux: source .venv/bin/activate)
-pip install -r requirements-dev.txt
+git clone https://github.com/Khushipatel27/starcast.git
+cd starcast
 
-# 2. train (about 5 minutes on a laptop; see "Data" below)
-python -m recsys.train --data-dir path/to/data --out artifacts
+# 1. install (editable, with dev tools)
+python -m venv .venv
+.venv\Scripts\activate             # Windows  (macOS/Linux: source .venv/bin/activate)
+pip install -e ".[dev]"
+
+# 2. put the Yelp files in data/ (see data/README.md), then train (5–10 minutes on a laptop)
+starcast-train --data-dir data --out artifacts
 
 # 3. serve with Docker
 docker compose up --build -d
@@ -48,6 +54,8 @@ curl localhost:8000/health
 ```
 
 Then open **http://localhost:8000/docs** for interactive Swagger docs.
+
+With `make` available: `make install`, `make train`, `make test`, `make docker-build`, `make docker-up`.
 
 ---
 
@@ -61,7 +69,7 @@ Trained on 455,854 ratings covering 11.3K users and 24.7K businesses, then evalu
 | Bayesian user/business average | 1.0374          |
 | Biased matrix factorization    | 1.0072          |
 | XGBoost (73 features)          | 0.9805          |
-| **Hybrid blend**               | **0.9791**      |
+| **StarCast hybrid**            | **0.9791**      |
 
 **Error distribution** (absolute error of the hybrid model):
 
@@ -80,14 +88,14 @@ Trained on 455,854 ratings covering 11.3K users and 24.7K businesses, then evalu
 | `/predict`    | 10 ms | 22 ms |
 | `/recommend`  | 16 ms | 32 ms |
 
-The model loads in about 1.5 s at startup. Artifacts total about 37 MB.
+The model loads in 1.5–4 s at startup. Artifacts total about 37 MB.
 
 ---
 
 ## Architecture
 
 ```
-                 ┌──────────── offline: recsys/train.py ─────────────┐
+                 ┌──────────── offline: starcast-train ──────────────┐
  Yelp ratings ──►│ features: user/business metadata, review, tip,    │
  + 6 JSON files  │ check-in, photo aggregates; leave-one-out rating  │──► artifacts/
                  │ encodings for train rows, Bayesian-smoothed at    │    ├─ model.pkl
@@ -95,7 +103,7 @@ The model loads in about 1.5 s at startup. Artifacts total about 37 MB.
                  │ blend fit on a 10% train-only holdout             │    └─ metrics.json
                  └───────────────────────────────────────────────────┘
                                          │
-                 ┌──────────── online: app/main.py ──────────────────┐
+                 ┌──────────── online: starcast.api ─────────────────┐
  GET /predict ──►│ build features ─► XGBoost, MF, baseline ─► blend  │
  GET /recommend ►│ stage 1: MF dot-product retrieval over all        │
                  │          eligible businesses ─► top 300           │
@@ -119,7 +127,8 @@ The model loads in about 1.5 s at startup. Artifacts total about 37 MB.
 - **Train-only blend calibration.** A stable hash of `(user, business)` holds out 10% of the training data. Base models are fit on the other 90%, and ridge weights are learned on the holdout. Everything is then refit on 100%. Validation labels are never used for tuning, so the reported RMSE is honest.
 - **Two-stage retrieval.** Running the 73-feature XGBoost path over all 25K businesses for every request would be slow. Matrix factorization scores are a single matrix-vector product, so they shortlist 300 candidates first, the same retrieve-then-rank pattern production recommenders use.
 - **Home-state default.** With no location filter, recommendations come from the state where the user has rated the most businesses. Without this, one user's top picks could mix Toronto and Cleveland. `anywhere=true` disables it.
-- **CPU-only XGBoost in Docker.** The standard `xgboost` wheel bundles CUDA/NCCL libraries. Switching to `xgboost-cpu` cut the image from 1.81 GB to 615 MB.
+- **Portable artifacts.** The model bundle stores only plain dicts and NumPy arrays, never pickled custom classes, so refactoring the code doesn't break saved models.
+- **CPU-only XGBoost in Docker.** The standard `xgboost` wheel bundles CUDA/NCCL libraries. Switching to `xgboost-cpu` cut the image from 1.81 GB to 618 MB.
 
 ---
 
@@ -197,44 +206,27 @@ New users without rating history still get recommendations, ranked by business-s
 
 ### `GET /health`
 
-Returns service status, model load time, catalog sizes, and validation RMSE. The Docker health check uses it.
+Returns service status, version, model load time, catalog sizes, and validation RMSE per model. The Docker health check uses it.
 
 Every response includes an `X-Process-Time-Ms` header.
-
----
-
-## Data
-
-The project uses the [Yelp Open Dataset](https://www.yelp.com/dataset). The data is **not** included in this repo because of Yelp's license terms and its size (~3 GB). Put these files in one folder:
-
-| File                 | Contents                                    |
-|----------------------|---------------------------------------------|
-| `yelp_train.csv`     | `user_id,business_id,stars` training ratings |
-| `yelp_val.csv`       | same format, used only for evaluation       |
-| `user.json`          | user profiles                               |
-| `business.json`      | business metadata                           |
-| `review_train.json`  | review text and votes                       |
-| `checkin.json`       | check-in counts                             |
-| `tip.json`           | tips                                        |
-| `photo.json`         | photo metadata                              |
-
-`yelp_val.csv` is optional. Without it, training still runs but skips the validation metrics. `user.json` and `business.json` are required. The review, check-in, tip, and photo files are optional; if one is missing, those features fall back to default values.
 
 ---
 
 ## Training
 
 ```bash
-python -m recsys.train --data-dir path/to/data --out artifacts
+starcast-train --data-dir data --out artifacts
 ```
 
 | Flag          | Default     | Description                    |
 |---------------|-------------|--------------------------------|
-| `--data-dir`  | required    | folder containing the data     |
+| `--data-dir`  | `data`      | folder containing the data     |
 | `--out`       | `artifacts` | where artifacts are written    |
 | `--n-trees`   | `520`       | XGBoost boosting rounds        |
 | `--mf-epochs` | `10`        | matrix factorization epochs    |
 | `--n-jobs`    | `-1`        | XGBoost threads (-1 = all)     |
+
+Hyperparameters live in [`src/starcast/config.py`](src/starcast/config.py). The required and optional input files are listed in [`data/README.md`](data/README.md). The data is not committed because of Yelp's license terms and its size (~3 GB).
 
 Output:
 
@@ -262,7 +254,7 @@ The image copies `artifacts/` in at build time, so train before building. To swa
 **Locally**
 
 ```bash
-uvicorn app.main:app --port 8000
+uvicorn starcast.api.main:app --reload --port 8000
 ```
 
 Set `ARTIFACT_DIR` to load artifacts from somewhere other than `./artifacts`.
@@ -275,34 +267,52 @@ Set `ARTIFACT_DIR` to load artifacts from somewhere other than `./artifacts`.
 pytest
 ```
 
-The 13 tests don't need the real dataset. They generate a small synthetic Yelp-format dataset, train a reduced model on it, and test the API end to end:
+The 25 tests don't need the Yelp data. [`tests/sample_data.py`](tests/sample_data.py) generates a small synthetic Yelp-format dataset, and the session fixture trains a reduced model on it.
 
-- feature vector shape matches the feature names
-- metrics are written, and the hybrid beats the global mean
-- `/predict` handles known pairs, cold-start users, unknown pairs (404), and missing parameters (422)
-- `/recommend` ranks results in order, excludes already-rated and closed businesses, applies city/state/category filters, uses the home-state default, handles cold-start users, returns an empty list when nothing matches, and validates `k`
+| File                     | Covers |
+|--------------------------|--------|
+| `tests/test_features.py` | leave-one-out encoding excludes the row's own label; Bayesian smoothing; cold-start defaults; feature vector shape |
+| `tests/test_models.py`   | ridge recovers known weights; blend clipping; MF learns biases; MF state round trip; metrics; artifact loading |
+| `tests/test_api.py`      | `/health`; `/predict` for known, cold-start and unknown pairs; `/recommend` ranking, exclusions, filters, home-state default, cold start, empty results, validation |
+
+**CI** (GitHub Actions) runs the suite on Python 3.10, 3.11 and 3.12. It then builds the Docker image against a model trained on the synthetic data.
 
 ---
 
 ## Project structure
 
 ```
-yelp-hybrid-recsys/
-├── app/
-│   └── main.py            # FastAPI app: routes, schemas, middleware
-├── recsys/
-│   ├── features.py        # data loaders + FeatureBuilder (LOO / Bayesian encodings)
-│   ├── mf.py              # biased matrix factorization (SGD)
-│   ├── model.py           # HybridRecommender: predict + two-stage recommend
-│   └── train.py           # training, blend calibration, metrics, artifact export
+starcast/
+├── .github/workflows/ci.yml     # tests on 3.10–3.12 + Docker build
+├── src/starcast/
+│   ├── __init__.py              # package version
+│   ├── config.py                # hyperparameters, artifact paths, serving defaults
+│   ├── data.py                  # readers for the ratings CSVs and six Yelp JSON files
+│   ├── features.py              # FeatureBuilder: 73 features, LOO / Bayesian encodings
+│   ├── models/
+│   │   ├── mf.py                # biased matrix factorization (SGD)
+│   │   ├── blend.py             # ridge blend fitting and application
+│   │   └── recommender.py       # HybridRecommender: predict + two-stage recommend
+│   ├── training/
+│   │   ├── pipeline.py          # starcast-train CLI: calibrate, refit, evaluate, export
+│   │   └── metrics.py           # RMSE, error distribution
+│   └── api/
+│       ├── main.py              # FastAPI app and routes
+│       └── schemas.py           # Pydantic response models
 ├── tests/
-│   ├── conftest.py        # synthetic dataset + small trained model fixture
-│   └── test_api.py        # end-to-end API tests
+│   ├── sample_data.py           # synthetic Yelp-format dataset generator
+│   ├── conftest.py              # trains a small model once per test session
+│   ├── test_features.py
+│   ├── test_models.py
+│   └── test_api.py
+├── data/README.md               # where the Yelp files go (contents git-ignored)
+├── artifacts/                   # trained model output (git-ignored)
 ├── Dockerfile
 ├── docker-compose.yml
-├── requirements.txt       # runtime dependencies
-├── requirements-dev.txt   # + pytest, httpx
-└── pyproject.toml
+├── Makefile
+├── pyproject.toml
+├── requirements.txt             # runtime dependencies
+└── LICENSE
 ```
 
 ---
@@ -311,7 +321,7 @@ yelp-hybrid-recsys/
 
 **Modeling:** Python, NumPy, XGBoost, matrix factorization (SGD), ridge regression
 **Serving:** FastAPI, Pydantic, Uvicorn
-**Infrastructure:** Docker, Docker Compose
+**Infrastructure:** Docker, Docker Compose, GitHub Actions
 **Testing:** pytest, FastAPI TestClient
 
 ---
@@ -331,3 +341,7 @@ yelp-hybrid-recsys/
 
 - Data: [Yelp Open Dataset](https://www.yelp.com/dataset)
 - Built on coursework from DSCI 553 at the University of Southern California
+
+## License
+
+[MIT](LICENSE)

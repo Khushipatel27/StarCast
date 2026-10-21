@@ -1,15 +1,12 @@
-import json
-
 import pytest
 from fastapi.testclient import TestClient
 
-from recsys.features import FEATURE_NAMES, N_FEATURES
 
 
 @pytest.fixture(scope="module")
 def client(artifact_dir, monkeypatch_module):
     monkeypatch_module.setenv("ARTIFACT_DIR", str(artifact_dir))
-    from app.main import app
+    from starcast.api.main import app
     with TestClient(app) as c:
         yield c
 
@@ -21,23 +18,12 @@ def monkeypatch_module():
     mp.undo()
 
 
-def test_feature_names_match_vector_length(artifact_dir):
-    from recsys.model import HybridRecommender
-    m = HybridRecommender.load(str(artifact_dir))
-    feats, _ = m.fb.predict_row("u000", "b000")
-    assert len(feats) == N_FEATURES == len(FEATURE_NAMES)
-
-
-def test_metrics_written(artifact_dir):
-    metrics = json.loads((artifact_dir / "metrics.json").read_text())
-    assert set(metrics["validation"]["rmse"]) >= {"hybrid", "xgboost", "matrix_factorization"}
-    assert metrics["validation"]["rmse"]["hybrid"] < metrics["validation"]["rmse"]["global_mean"]
-
-
 def test_health(client):
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json()["status"] == "ok"
+    body = r.json()
+    assert body["status"] == "ok"
+    assert set(body["validation_rmse"]) >= {"hybrid", "xgboost"}
     assert "X-Process-Time-Ms" in r.headers
 
 
@@ -66,7 +52,7 @@ def test_predict_requires_params(client):
 
 
 def test_recommend_excludes_rated_and_closed(client, artifact_dir):
-    from recsys.model import HybridRecommender
+    from starcast.models import HybridRecommender
     rated = HybridRecommender.load(str(artifact_dir)).user_rated["u000"]
     r = client.get("/recommend/u000", params={"k": 5})
     assert r.status_code == 200
@@ -102,7 +88,7 @@ def test_recommend_validates_k(client):
 
 
 def test_recommend_defaults_to_home_state(client, artifact_dir):
-    from recsys.model import HybridRecommender
+    from starcast.models import HybridRecommender
     home = HybridRecommender.load(str(artifact_dir)).home_state("u000")
     body = client.get("/recommend/u000", params={"k": 50}).json()
     assert body["filters"]["state"] == home

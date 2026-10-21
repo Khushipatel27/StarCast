@@ -1,7 +1,8 @@
 services:
   api:
     build: .
-    image: yelp-hybrid-recsys:latest
+    image: starcast:latest
+    container_name: starcast-api
     ports:
       - "8000:8000"
     environment:
