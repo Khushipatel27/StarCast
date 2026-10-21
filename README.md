@@ -64,7 +64,7 @@ With `make` available: `make install`, `make train`, `make test`, `make docker-b
 Trained on 455,854 ratings covering 11.3K users and 24.7K businesses, then evaluated on 142,044 held-out ratings.
 
 | Model                          | Validation RMSE |
-|--------------------------------|-----------------|
+| ------------------------------ | --------------- |
 | Global mean                    | 1.1222          |
 | Bayesian user/business average | 1.0374          |
 | Biased matrix factorization    | 1.0072          |
@@ -73,20 +73,20 @@ Trained on 455,854 ratings covering 11.3K users and 24.7K businesses, then evalu
 
 **Error distribution** (absolute error of the hybrid model):
 
-| Error       | Count   | Share |
-|-------------|---------|-------|
-| < 1 star    | 102,823 | 72.4% |
-| 1–2 stars   | 32,049  | 22.6% |
-| 2–3 stars   | 6,287   | 4.4%  |
-| 3–4 stars   | 881     | 0.6%  |
-| ≥ 4 stars   | 4       | 0.0%  |
+| Error     | Count   | Share |
+| --------- | ------- | ----- |
+| < 1 star  | 102,823 | 72.4% |
+| 1–2 stars | 32,049  | 22.6% |
+| 2–3 stars | 6,287   | 4.4%  |
+| 3–4 stars | 881     | 0.6%  |
+| ≥ 4 stars | 4       | 0.0%  |
 
 **Serving performance** (Docker on a local laptop, 50 requests per endpoint):
 
-| Endpoint      | p50   | p95   |
-|---------------|-------|-------|
-| `/predict`    | 10 ms | 22 ms |
-| `/recommend`  | 16 ms | 32 ms |
+| Endpoint     | p50   | p95   |
+| ------------ | ----- | ----- |
+| `/predict`   | 10 ms | 22 ms |
+| `/recommend` | 16 ms | 32 ms |
 
 The model loads in 1.5–4 s at startup. Artifacts total about 37 MB.
 
@@ -113,17 +113,17 @@ The model loads in 1.5–4 s at startup. Artifacts total about 37 MB.
 
 ### Features (73 total)
 
-| Group              | Examples                                                                 |
-|--------------------|--------------------------------------------------------------------------|
-| User profile       | average stars, review count, fans, elite years, account age, compliments |
-| Business profile   | stars, review count, price range, open status, location, 10 attribute flags, 10 category flags |
-| Review aggregates  | mean useful/funny/cool votes and review length, per user and per business |
-| Engagement         | check-in volume, tip counts and likes, photo counts and caption rate     |
-| Rating encodings   | user/business average rating (leave-one-out or Bayesian), rating std, interaction terms, cold-start flags |
+| Group             | Examples                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------- |
+| User profile      | average stars, review count, fans, elite years, account age, compliments                                  |
+| Business profile  | stars, review count, price range, open status, location, 10 attribute flags, 10 category flags            |
+| Review aggregates | mean useful/funny/cool votes and review length, per user and per business                                 |
+| Engagement        | check-in volume, tip counts and likes, photo counts and caption rate                                      |
+| Rating encodings  | user/business average rating (leave-one-out or Bayesian), rating std, interaction terms, cold-start flags |
 
 ### Design decisions
 
-- **Leave-one-out encoding.** A naive user-average feature contains the row's own label, so the model learns to copy it and overfits. Training rows use averages computed *without* the current rating. At inference, averages are smoothed toward the global mean with `(sum + 10·μ) / (count + 10)`, so a user with one rating isn't treated as fully known.
+- **Leave-one-out encoding.** A naive user-average feature contains the row's own label, so the model learns to copy it and overfits. Training rows use averages computed _without_ the current rating. At inference, averages are smoothed toward the global mean with `(sum + 10·μ) / (count + 10)`, so a user with one rating isn't treated as fully known.
 - **Train-only blend calibration.** A stable hash of `(user, business)` holds out 10% of the training data. Base models are fit on the other 90%, and ridge weights are learned on the holdout. Everything is then refit on 100%. Validation labels are never used for tuning, so the reported RMSE is honest.
 - **Two-stage retrieval.** Running the 73-feature XGBoost path over all 25K businesses for every request would be slow. Matrix factorization scores are a single matrix-vector product, so they shortlist 300 candidates first, the same retrieve-then-rank pattern production recommenders use.
 - **Home-state default.** With no location filter, recommendations come from the state where the user has rated the most businesses. Without this, one user's top picks could mix Toronto and Cleveland. `anywhere=true` disables it.
@@ -138,14 +138,15 @@ The model loads in 1.5–4 s at startup. Artifacts total about 37 MB.
 
 Predicts the star rating a user would give a business.
 
-| Param         | Required | Description     |
-|---------------|----------|-----------------|
+| Param         | Required | Description      |
+| ------------- | -------- | ---------------- |
 | `user_id`     | yes      | Yelp user ID     |
 | `business_id` | yes      | Yelp business ID |
 
 ```bash
 curl "localhost:8000/predict?user_id=wf1GqnKQuvH-V3QN80UOOQ&business_id=fThrN4tfupIGetkrz18JOg"
 ```
+
 ```json
 {
   "user_id": "wf1GqnKQuvH-V3QN80UOOQ",
@@ -161,43 +162,55 @@ curl "localhost:8000/predict?user_id=wf1GqnKQuvH-V3QN80UOOQ&business_id=fThrN4tf
 }
 ```
 
-| Status | When                                              |
-|--------|---------------------------------------------------|
-| 200    | at least one of the user or business is known     |
-| 404    | neither the user nor the business is known        |
-| 422    | a required parameter is missing                   |
+| Status | When                                          |
+| ------ | --------------------------------------------- |
+| 200    | at least one of the user or business is known |
+| 404    | neither the user nor the business is known    |
+| 422    | a required parameter is missing               |
 
 ### `GET /recommend/{user_id}`
 
 Returns the top-K businesses for a user, ranked by predicted rating.
 
-| Param            | Default           | Description                                         |
-|------------------|-------------------|-----------------------------------------------------|
-| `k`              | `10`              | number of results (1–100)                           |
-| `city`           | none              | exact city match, case-insensitive                  |
-| `state`          | user's home state | two-letter state code, e.g. `NV`                    |
-| `category`       | none              | substring of the business categories, e.g. `pizza`  |
-| `anywhere`       | `false`           | turn off the home-state default                     |
-| `include_closed` | `false`           | include closed businesses                           |
-| `exclude_rated`  | `true`            | skip businesses the user has already rated          |
+| Param            | Default           | Description                                        |
+| ---------------- | ----------------- | -------------------------------------------------- |
+| `k`              | `10`              | number of results (1–100)                          |
+| `city`           | none              | exact city match, case-insensitive                 |
+| `state`          | user's home state | two-letter state code, e.g. `NV`                   |
+| `category`       | none              | substring of the business categories, e.g. `pizza` |
+| `anywhere`       | `false`           | turn off the home-state default                    |
+| `include_closed` | `false`           | include closed businesses                          |
+| `exclude_rated`  | `true`            | skip businesses the user has already rated         |
 
 ```bash
 curl "localhost:8000/recommend/wf1GqnKQuvH-V3QN80UOOQ?k=3&city=Las%20Vegas&category=pizza"
 ```
+
 ```json
 {
   "user_id": "wf1GqnKQuvH-V3QN80UOOQ",
   "known_user": true,
   "k": 3,
-  "filters": {"city": "Las Vegas", "state": null, "category": "pizza",
-              "include_closed": false, "exclude_rated": true},
+  "filters": {
+    "city": "Las Vegas",
+    "state": null,
+    "category": "pizza",
+    "include_closed": false,
+    "exclude_rated": true
+  },
   "recommendations": [
-    {"rank": 1, "business_id": "e6m1p7oPbq7Gq37eMhSsWA", "name": "Joey's NY Pizza",
-     "city": "Las Vegas", "state": "NV",
-     "categories": "Pasta Shops, Sandwiches, Restaurants, Food, Pizza, ...",
-     "yelp_stars": 4.5, "predicted_stars": 4.5628},
-    {"rank": 2, "...": "..."},
-    {"rank": 3, "...": "..."}
+    {
+      "rank": 1,
+      "business_id": "e6m1p7oPbq7Gq37eMhSsWA",
+      "name": "Joey's NY Pizza",
+      "city": "Las Vegas",
+      "state": "NV",
+      "categories": "Pasta Shops, Sandwiches, Restaurants, Food, Pizza, ...",
+      "yelp_stars": 4.5,
+      "predicted_stars": 4.5628
+    },
+    { "rank": 2, "...": "..." },
+    { "rank": 3, "...": "..." }
   ]
 }
 ```
@@ -218,13 +231,13 @@ Every response includes an `X-Process-Time-Ms` header.
 starcast-train --data-dir data --out artifacts
 ```
 
-| Flag          | Default     | Description                    |
-|---------------|-------------|--------------------------------|
-| `--data-dir`  | `data`      | folder containing the data     |
-| `--out`       | `artifacts` | where artifacts are written    |
-| `--n-trees`   | `520`       | XGBoost boosting rounds        |
-| `--mf-epochs` | `10`        | matrix factorization epochs    |
-| `--n-jobs`    | `-1`        | XGBoost threads (-1 = all)     |
+| Flag          | Default     | Description                 |
+| ------------- | ----------- | --------------------------- |
+| `--data-dir`  | `data`      | folder containing the data  |
+| `--out`       | `artifacts` | where artifacts are written |
+| `--n-trees`   | `520`       | XGBoost boosting rounds     |
+| `--mf-epochs` | `10`        | matrix factorization epochs |
+| `--n-jobs`    | `-1`        | XGBoost threads (-1 = all)  |
 
 Hyperparameters live in [`src/starcast/config.py`](src/starcast/config.py). The required and optional input files are listed in [`data/README.md`](data/README.md). The data is not committed because of Yelp's license terms and its size (~3 GB).
 
@@ -269,10 +282,10 @@ pytest
 
 The 25 tests don't need the Yelp data. [`tests/sample_data.py`](tests/sample_data.py) generates a small synthetic Yelp-format dataset, and the session fixture trains a reduced model on it.
 
-| File                     | Covers |
-|--------------------------|--------|
-| `tests/test_features.py` | leave-one-out encoding excludes the row's own label; Bayesian smoothing; cold-start defaults; feature vector shape |
-| `tests/test_models.py`   | ridge recovers known weights; blend clipping; MF learns biases; MF state round trip; metrics; artifact loading |
+| File                     | Covers                                                                                                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/test_features.py` | leave-one-out encoding excludes the row's own label; Bayesian smoothing; cold-start defaults; feature vector shape                                                  |
+| `tests/test_models.py`   | ridge recovers known weights; blend clipping; MF learns biases; MF state round trip; metrics; artifact loading                                                      |
 | `tests/test_api.py`      | `/health`; `/predict` for known, cold-start and unknown pairs; `/recommend` ranking, exclusions, filters, home-state default, cold start, empty results, validation |
 
 **CI** (GitHub Actions) runs the suite on Python 3.10, 3.11 and 3.12. It then builds the Docker image against a model trained on the synthetic data.
@@ -340,7 +353,6 @@ starcast/
 ## Acknowledgments
 
 - Data: [Yelp Open Dataset](https://www.yelp.com/dataset)
-- Built on coursework from DSCI 553 at the University of Southern California
 
 ## License
 
