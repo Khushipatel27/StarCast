@@ -19,8 +19,6 @@ Under the hood, a **hybrid model** combines three predictors with a learned ridg
 
 It is served through **FastAPI** and packaged with **Docker**.
 
-> This project extends my DSCI 553 (Foundations and Applications of Data Mining, USC) coursework. I turned a batch Spark job into an installable Python package and a deployable service with a two-stage recommendation endpoint, tests, CI, and containerization.
-
 ---
 
 ## Highlights
